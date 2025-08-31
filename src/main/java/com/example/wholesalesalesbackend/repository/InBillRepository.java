@@ -42,10 +42,9 @@ public interface InBillRepository extends JpaRepository<InBill, Long> {
         int deleteAllBySupplier(@Param("supplier") String supplier);
 
         List<InBill> findByClientIdInAndDateBetweenAndIsInBillFalse(List<Long> clientIds, LocalDateTime startDate,
-                LocalDateTime endDate);
+                        LocalDateTime endDate);
 
-
-         List<InBill> findByClientIdInAndDateBetweenAndIsInBillTrue(List<Long> clientIds, LocalDateTime startDate,
+        List<InBill> findByClientIdInAndDateBetweenAndIsInBillTrue(List<Long> clientIds, LocalDateTime startDate,
                         LocalDateTime endDate);
 
         @Query("""
