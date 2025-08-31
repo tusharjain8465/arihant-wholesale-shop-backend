@@ -51,4 +51,6 @@ public class Supplier {
     @Column(name = "client_id", nullable = false)
     private Long clientId;
 
+    @Column(name = "delete_flag", nullable = false, columnDefinition = "BOOLEAN DEFAULT FALSE")
+    private Boolean deleteFlag;
 }
