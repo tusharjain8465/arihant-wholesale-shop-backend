@@ -12,7 +12,9 @@ public class GraphResponseDTO {
 
   // ADD THESE FIELDS
   private List<Double> expensesData;
+  private List<Double> inBillData;
   private List<Double> outBillData;
+  private List<Double> depositData;
 
   private double averageSale;
   private double averageProfit;
@@ -20,7 +22,8 @@ public class GraphResponseDTO {
   private double highestProfit;
 
   private double totalExpense;
-
   private double totalOutBill;
+  private double totalInBill;
+  private double totalDeposit;
 
 }
