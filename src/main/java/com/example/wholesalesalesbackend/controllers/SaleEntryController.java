@@ -15,12 +15,14 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
+import org.postgresql.translation.messages_bg;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -42,10 +44,12 @@ import com.example.wholesalesalesbackend.dto.SaleAttributeUpdateDTO;
 import com.example.wholesalesalesbackend.dto.SaleEntryDTO;
 import com.example.wholesalesalesbackend.dto.SaleEntryRequestDTO;
 import com.example.wholesalesalesbackend.dto.SaleUpdateRequest;
+import com.example.wholesalesalesbackend.model.Deposit;
 import com.example.wholesalesalesbackend.model.Expense;
 import com.example.wholesalesalesbackend.model.InBill;
 import com.example.wholesalesalesbackend.model.SaleEntry;
 import com.example.wholesalesalesbackend.model.User;
+import com.example.wholesalesalesbackend.repository.DepositRepository;
 import com.example.wholesalesalesbackend.repository.ExpenseRepository;
 import com.example.wholesalesalesbackend.repository.InBillRepository;
 import com.example.wholesalesalesbackend.repository.SaleEntryRepository;
@@ -79,6 +83,9 @@ public class SaleEntryController {
 
     @Autowired(required = false)
     InBillRepository inBillRepository;
+
+    @Autowired(required = false)
+    DepositRepository depositRepository;
 
     @PostMapping("/sale-entry/add")
     public ResponseEntity<String> addSaleEntry(@RequestBody SaleEntryRequestDTO requestDTO, @RequestParam Long userId) {
@@ -273,42 +280,45 @@ public class SaleEntryController {
     public ResponseEntity<byte[]> downloadSalesPdf(
             @RequestParam String period,
             @RequestParam Long userId,
+            @RequestParam(required = false) Integer month,
+            @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Long clientId) throws Exception {
 
         // Fetch sales data
-        GraphResponseDTO data = getSalesData(period, userId, clientId);
+        GraphResponseDTO data = getSalesData(userId, clientId, period, month, year);
 
-        byte[] pdfBytes = generateSalesPdf(
-                period,
+        byte[] pdfBytes = generateSalesPdf(period,
                 data.getLabels(),
                 data.getSalesData(),
                 data.getProfitData(),
                 data.getExpensesData(),
-                data.getOutBillData());
+                data.getOutBillData(),
+                data.getInBillData(),
+                data.getDepositData(), month, year);
 
         // Prepare filename
         java.time.LocalDate now = java.time.LocalDate.now();
         java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter.ofPattern("dd_MMMM_yyyy");
         String generationDate = now.format(formatter);
 
-        // Determine month of report
         String reportMonth = "";
         if (period.equalsIgnoreCase("today") || period.equalsIgnoreCase("week")) {
-            reportMonth = now.getMonth().name(); // e.g., AUGUST
+            reportMonth = now.getMonth().name();
         } else if (period.equalsIgnoreCase("month")) {
-            reportMonth = data.getLabels().get(0); // first month label
+            reportMonth = data.getLabels().get(0);
         }
 
         String filename = period.toLowerCase() + "_" + reportMonth + "_" + generationDate + ".pdf";
 
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + filename)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(pdfBytes);
     }
 
     public byte[] generateSalesPdf(String period, List<String> labels, List<Double> salesData,
-            List<Double> profitData, List<Double> expensesData, List<Double> outBillData) throws Exception {
+            List<Double> profitData, List<Double> expensesData, List<Double> outBillData, List<Double> inBillData,
+            List<Double> depositData, Integer month, Integer year) throws Exception {
 
         Document document = new Document(PageSize.A4, 36, 36, 36, 36);
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -317,20 +327,23 @@ public class SaleEntryController {
 
         // ---------------- Heading ----------------
         Font headingFont = new Font(Font.FontFamily.HELVETICA, 18, Font.BOLD);
+        String monthYearLabel;
 
-        String periodLabel = period.toUpperCase();
-        String monthYearLabel = "";
-
-        if (period.equalsIgnoreCase("today") || period.equalsIgnoreCase("week")) {
-            // Get current month and year
+        if (month != null && year != null) {
+            // Convert month number to full month name
+            java.time.Month monthEnum = java.time.Month.of(month); // 1 = January
+            monthYearLabel = monthEnum.name().substring(0, 1).toUpperCase()
+                    + monthEnum.name().substring(1).toLowerCase()
+                    + " " + year;
+        } else {
             java.time.LocalDate now = java.time.LocalDate.now();
-            monthYearLabel = now.getMonth().name() + " " + now.getYear();
-        } else if (period.equalsIgnoreCase("month")) {
-            // If monthly report, assume labels contain month names, take first month
-            monthYearLabel = labels.get(0) + " " + java.time.LocalDate.now().getYear();
+            java.time.Month monthEnum = now.getMonth();
+            monthYearLabel = monthEnum.name().substring(0, 1).toUpperCase()
+                    + monthEnum.name().substring(1).toLowerCase()
+                    + " " + now.getYear();
         }
 
-        Paragraph heading = new Paragraph("Sales Report - " + periodLabel + " (" + monthYearLabel + ")", headingFont);
+        Paragraph heading = new Paragraph("Sales Report - " + monthYearLabel, headingFont);
         heading.setAlignment(Element.ALIGN_CENTER);
         heading.setSpacingAfter(20f);
         document.add(heading);
@@ -343,193 +356,297 @@ public class SaleEntryController {
         document.add(date);
 
         // ---------------- Table ----------------
-        PdfPTable table = new PdfPTable(5);
+        PdfPTable table = new PdfPTable(7); // 7 columns
         table.setWidthPercentage(100);
         table.setSpacingBefore(10f);
         table.setSpacingAfter(10f);
-        table.setWidths(new float[] { 2f, 2f, 2f, 2f, 2f });
+        table.setWidths(new float[] { 2f, 2f, 2f, 2f, 2f, 2f, 2f });
 
-        // Fonts
-        Font tableHeaderFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD);
+        Font tableHeaderFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD, BaseColor.WHITE);
         Font tableCellFont = new Font(Font.FontFamily.HELVETICA, 12, Font.NORMAL);
 
-        // Table headers
-        String[] headers = { "Time/Day", "Sale (₹)", "Profit (₹)", "Expenses (₹)", "Out Bill (₹)" };
+        // Table headers in the required sequence
+        BaseColor headerColor = new BaseColor(0, 121, 182); // Blue
+        String[] headers = { "Time/Day", "Sale (₹)", "Profit (₹)", "Deposit (₹)", "In Bill (₹)", "Out Bill (₹)",
+                "Expenses (₹)" };
         for (String h : headers) {
             PdfPCell cell = new PdfPCell(new Phrase(h, tableHeaderFont));
             cell.setHorizontalAlignment(Element.ALIGN_CENTER);
-            cell.setBackgroundColor(BaseColor.LIGHT_GRAY);
+            cell.setBackgroundColor(headerColor);
             table.addCell(cell);
         }
 
-        // Table rows
+        // Table rows with alternating colors
+        BaseColor rowColor1 = new BaseColor(224, 235, 255); // Light Blue
+        BaseColor rowColor2 = BaseColor.WHITE;
+
         for (int i = 0; i < labels.size(); i++) {
-            PdfPCell cellLabel = new PdfPCell(new Phrase(labels.get(i), tableCellFont));
-            cellLabel.setHorizontalAlignment(Element.ALIGN_CENTER);
-            table.addCell(cellLabel);
+            BaseColor bgColor = (i % 2 == 0) ? rowColor1 : rowColor2;
 
-            PdfPCell cellSale = new PdfPCell(new Phrase(String.valueOf(Math.round(salesData.get(i))), tableCellFont));
-            cellSale.setHorizontalAlignment(Element.ALIGN_CENTER);
-            table.addCell(cellSale);
-
-            PdfPCell cellProfit = new PdfPCell(
-                    new Phrase(String.valueOf(Math.round(profitData.get(i))), tableCellFont));
-            cellProfit.setHorizontalAlignment(Element.ALIGN_CENTER);
-            table.addCell(cellProfit);
-
-            PdfPCell cellExpense = new PdfPCell(
-                    new Phrase(String.valueOf(Math.round(expensesData.get(i))), tableCellFont));
-            cellExpense.setHorizontalAlignment(Element.ALIGN_CENTER);
-            table.addCell(cellExpense);
-
-            PdfPCell cellOutBill = new PdfPCell(
-                    new Phrase(String.valueOf(Math.round(outBillData.get(i))), tableCellFont));
-            cellOutBill.setHorizontalAlignment(Element.ALIGN_CENTER);
-            table.addCell(cellOutBill);
+            table.addCell(createCell(labels.get(i), tableCellFont, bgColor));
+            table.addCell(createCell(Math.round(salesData.get(i)), tableCellFont, bgColor));
+            table.addCell(createCell(Math.round(profitData.get(i)), tableCellFont, bgColor));
+            table.addCell(createCell(Math.round(depositData.get(i)), tableCellFont, bgColor));
+            table.addCell(createCell(Math.round(inBillData.get(i)), tableCellFont, bgColor));
+            table.addCell(createCell(-Math.round(Math.abs(outBillData.get(i))), tableCellFont, bgColor));
+            table.addCell(createCell(Math.round(expensesData.get(i)), tableCellFont, bgColor));
         }
+
+        // ---------------- Grand Total Row ----------------
+        Font totalFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD, BaseColor.WHITE);
+        BaseColor totalColor = new BaseColor(0, 82, 163); // Dark Blue
+
+        Double totalSale = salesData.stream().mapToDouble(Double::doubleValue).sum();
+        Double totalProfit = profitData.stream().mapToDouble(Double::doubleValue).sum();
+        Double totalDeposit = depositData.stream().mapToDouble(Double::doubleValue).sum();
+        Double totalInBill = inBillData.stream().mapToDouble(Double::doubleValue).sum();
+        Double totalOutBill = outBillData.stream().mapToDouble(Double::doubleValue).sum();
+        Double totalExpenses = expensesData.stream().mapToDouble(Double::doubleValue).sum();
+
+        table.addCell(createCell("GRAND TOTAL", totalFont, totalColor));
+        table.addCell(createCell(Math.round(totalSale), totalFont, totalColor));
+        table.addCell(createCell(Math.round(totalProfit), totalFont, totalColor));
+        table.addCell(createCell(Math.round(totalDeposit), totalFont, totalColor));
+        table.addCell(createCell(Math.round(totalInBill), totalFont, totalColor));
+        table.addCell(createCell(-Math.round(Math.abs(totalOutBill)), totalFont, totalColor));
+        table.addCell(createCell(Math.round(totalExpenses), totalFont, totalColor));
 
         document.add(table);
 
-        // ---------------- Totals Section ----------------
-        PdfPTable totalsTable = new PdfPTable(2); // label + value
-        totalsTable.setWidthPercentage(50);
-        totalsTable.setSpacingBefore(15f);
-        totalsTable.setHorizontalAlignment(Element.ALIGN_CENTER);
-        totalsTable.setWidths(new float[] { 2f, 2f });
+        // ---------------- Remaining Balance ----------------
+        PdfPTable balanceTable = new PdfPTable(2);
+        balanceTable.setWidthPercentage(50);
+        balanceTable.setSpacingBefore(10f);
+        balanceTable.setHorizontalAlignment(Element.ALIGN_CENTER);
+        balanceTable.setWidths(new float[] { 3f, 2f });
 
-        Font labelFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD);
-        Font valueFont = new Font(Font.FontFamily.HELVETICA, 12, Font.NORMAL);
-        Font finalFont = new Font(Font.FontFamily.HELVETICA, 14, Font.BOLD, BaseColor.BLUE);
+        Font balanceFont = new Font(Font.FontFamily.HELVETICA, 14, Font.BOLD, BaseColor.WHITE);
+        BaseColor balanceColor = new BaseColor(220, 50, 50); // Red
 
-        double totalSale = salesData.stream().mapToDouble(Double::doubleValue).sum();
-        double totalProfit = profitData.stream().mapToDouble(Double::doubleValue).sum();
-        double totalExpenses = expensesData.stream().mapToDouble(Double::doubleValue).sum();
-        double totalOutBill = outBillData.stream().mapToDouble(Double::doubleValue).sum();
-        double finalAmount = totalSale - totalExpenses - totalOutBill;
+        PdfPCell balanceLabel = new PdfPCell(new Phrase("Remaining Balance (Sale - Out Bill - Expenses)", balanceFont));
+        balanceLabel.setBorder(Rectangle.NO_BORDER);
+        balanceLabel.setBackgroundColor(balanceColor);
+        balanceLabel.setHorizontalAlignment(Element.ALIGN_CENTER);
+        balanceTable.addCell(balanceLabel);
 
-        BiConsumer<String, Double> addRow = (label, value) -> {
-            PdfPCell cell1 = new PdfPCell(new Phrase(label, labelFont));
-            cell1.setBorder(Rectangle.NO_BORDER);
-            cell1.setHorizontalAlignment(Element.ALIGN_LEFT);
-            totalsTable.addCell(cell1);
+        Double remainingBalance = totalSale - Math.abs(totalOutBill) - totalExpenses;
+        PdfPCell balanceValue = new PdfPCell(new Phrase(String.valueOf(Math.round(remainingBalance)), balanceFont));
+        balanceValue.setBorder(Rectangle.NO_BORDER);
+        balanceValue.setBackgroundColor(balanceColor);
+        balanceValue.setHorizontalAlignment(Element.ALIGN_CENTER);
+        balanceTable.addCell(balanceValue);
 
-            PdfPCell cell2 = new PdfPCell(new Phrase(String.valueOf(Math.round(value)), valueFont));
-            cell2.setBorder(Rectangle.NO_BORDER);
-            cell2.setHorizontalAlignment(Element.ALIGN_RIGHT);
-            totalsTable.addCell(cell2);
-        };
-
-        addRow.accept("Total Sale", totalSale);
-        addRow.accept("Total Profit", totalProfit);
-        addRow.accept("Total Expenses", totalExpenses);
-        addRow.accept("Total Out Bill", totalOutBill);
-
-        // Final amount
-        PdfPCell finalLabel = new PdfPCell(new Phrase("Final Amount", labelFont));
-        finalLabel.setBorder(Rectangle.NO_BORDER);
-        finalLabel.setHorizontalAlignment(Element.ALIGN_LEFT);
-        totalsTable.addCell(finalLabel);
-
-        PdfPCell finalValue = new PdfPCell(new Phrase(String.valueOf(Math.round(finalAmount)), finalFont));
-        finalValue.setBorder(Rectangle.NO_BORDER);
-        finalValue.setHorizontalAlignment(Element.ALIGN_RIGHT);
-        totalsTable.addCell(finalValue);
-
-        document.add(totalsTable);
+        document.add(balanceTable);
 
         document.close();
         return baos.toByteArray();
     }
 
-    @GetMapping("/graph-data")
-    public GraphResponseDTO getSalesData(@RequestParam String period,
-            @RequestParam Long userId,
-            @RequestParam(required = false) Long clientId) {
+    // Helper method to create table cells
+    private PdfPCell createCell(Object value, Font font, BaseColor bgColor) {
+        PdfPCell cell = new PdfPCell(new Phrase(String.valueOf(value), font));
+        cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+        cell.setBackgroundColor(bgColor);
+        return cell;
+    }
 
+    @GetMapping("/graph-data")
+    public GraphResponseDTO getSalesData(
+            @RequestParam Long userId,
+            @RequestParam(required = false) Long clientId,
+            @RequestParam(required = false) String period, // today, week, month, year
+            @RequestParam(required = false) Integer month, // 1-12
+            @RequestParam(required = false) Integer year // e.g. 2024
+    ) {
         GraphResponseDTO response = new GraphResponseDTO();
         LocalDate today = LocalDate.now();
+
+        List<Long> clientIds = clientId == null
+                ? userClientRepository.fetchClientIdsByUserId(userId)
+                : Collections.singletonList(clientId);
 
         List<String> labels = new ArrayList<>();
         List<Double> salesData = new ArrayList<>();
         List<Double> profitData = new ArrayList<>();
         List<Double> expensesData = new ArrayList<>();
+        List<Double> inBillData = new ArrayList<>();
         List<Double> outBillData = new ArrayList<>();
+        List<Double> depositData = new ArrayList<>();
 
-        // Determine client IDs
-        List<Long> clientIds = clientId == null
-                ? userClientRepository.fetchClientIdsByUserId(userId)
-                : Collections.singletonList(clientId);
+        LocalDateTime startDate;
+        LocalDateTime endDate;
 
-        // Determine date range and labels
-        LocalDateTime startDate, endDate;
-        switch (period.toLowerCase()) {
-            case "today": {
-                YearMonth currentMonth = YearMonth.from(today);
-                startDate = currentMonth.atDay(1).atStartOfDay();
-                endDate = currentMonth.atEndOfMonth().atTime(23, 59, 59);
+        // ---------------- MONTH & YEAR FILTER ----------------
+        if (month != null && year != null) {
+            YearMonth yearMonth = YearMonth.of(year, month);
+            startDate = yearMonth.atDay(1).atStartOfDay();
+            endDate = yearMonth.atEndOfMonth().atTime(23, 59, 59);
 
-                labels = IntStream.rangeClosed(1, today.lengthOfMonth())
-                        .mapToObj(String::valueOf)
-                        .collect(Collectors.toList());
-                break;
+            labels = IntStream.rangeClosed(1, yearMonth.lengthOfMonth())
+                    .mapToObj(String::valueOf)
+                    .collect(Collectors.toList());
+
+            // Fetch data
+            List<SaleEntry> salesEntries = saleEntryRepository
+                    .findAllByClient_IdInAndDeleteFlagFalseAndSaleDateTimeBetween(clientIds, startDate, endDate);
+
+            List<Expense> expenses = expenseRepository
+                    .findByClientIdInAndDatetimeISTBetween(clientIds, startDate, endDate);
+
+            List<InBill> outBills = inBillRepository
+                    .findByClientIdInAndDateBetweenAndIsInBillFalse(clientIds, startDate, endDate);
+
+            List<InBill> inBills = inBillRepository
+                    .findByClientIdInAndDateBetweenAndIsInBillTrue(clientIds, startDate, endDate);
+
+            List<Deposit> deposits = depositRepository
+                    .findByClientIdInAndDepositDateBetween(clientIds, startDate, endDate);
+
+            for (int day = 1; day <= yearMonth.lengthOfMonth(); day++) {
+                LocalDate date = LocalDate.of(year, month, day);
+
+                double dailySale = salesEntries.stream()
+                        .filter(e -> e.getSaleDateTime().toLocalDate().equals(date))
+                        .mapToDouble(e -> Optional.ofNullable(e.getTotalPrice()).orElse(0.0))
+                        .sum();
+
+                double dailyProfit = salesEntries.stream()
+                        .filter(e -> e.getSaleDateTime().toLocalDate().equals(date))
+                        .mapToDouble(e -> Optional.ofNullable(e.getProfit()).orElse(0.0))
+                        .sum();
+
+                double dailyExpense = expenses.stream()
+                        .filter(e -> e.getDatetimeIST().toLocalDate().equals(date))
+                        .mapToDouble(e -> Optional.ofNullable(e.getAmount()).orElse(0.0))
+                        .sum();
+
+                double dailyOutBill = outBills.stream()
+                        .filter(b -> b.getDate().toLocalDate().equals(date))
+                        .mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
+                        .sum();
+
+                double dailyInBill = inBills.stream()
+                        .filter(b -> b.getDate().toLocalDate().equals(date))
+                        .mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
+                        .sum();
+
+                double dailyDeposit = deposits.stream()
+                        .filter(b -> b.getDepositDate().toLocalDate().equals(date))
+                        .mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
+                        .sum();
+
+                salesData.add(dailySale);
+                profitData.add(dailyProfit);
+                expensesData.add(dailyExpense);
+                outBillData.add(dailyOutBill);
+                inBillData.add(dailyInBill);
+                depositData.add(dailyDeposit);
             }
-            case "week": {
-                LocalDate startOfWeek = today.with(DayOfWeek.MONDAY);
-                startDate = startOfWeek.atStartOfDay();
-                endDate = startOfWeek.plusDays(6).atTime(23, 59, 59);
-
-                labels = Arrays.asList("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun");
-                break;
-            }
-            case "month": {
-                startDate = LocalDate.of(today.getYear(), 1, 1).atStartOfDay();
-                endDate = LocalDate.of(today.getYear(), 12, 31).atTime(23, 59, 59);
-
-                labels = Arrays.asList("Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec");
-                break;
-            }
-            default:
-                throw new IllegalArgumentException("Invalid period. Use today, week, or month.");
         }
+        // ---------------- PERIOD FILTER ----------------
+        else if (period != null) {
+            switch (period.toLowerCase()) {
+                case "today": {
+                    startDate = today.atStartOfDay();
+                    endDate = today.atTime(23, 59, 59);
+                    labels = Collections.singletonList(today.toString());
+                    break;
+                }
+                case "week": {
+                    LocalDate startOfWeek = today.with(DayOfWeek.MONDAY);
+                    startDate = startOfWeek.atStartOfDay();
+                    endDate = startOfWeek.plusDays(6).atTime(23, 59, 59);
+                    labels = Arrays.asList("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun");
+                    break;
+                }
+                case "month": {
+                    YearMonth currentMonth = YearMonth.from(today);
+                    startDate = currentMonth.atDay(1).atStartOfDay();
+                    endDate = currentMonth.atEndOfMonth().atTime(23, 59, 59);
+                    labels = IntStream.rangeClosed(1, currentMonth.lengthOfMonth())
+                            .mapToObj(String::valueOf)
+                            .collect(Collectors.toList());
+                    break;
+                }
+                case "year": {
+                    startDate = LocalDate.of(today.getYear(), 1, 1).atStartOfDay();
+                    endDate = LocalDate.of(today.getYear(), 12, 31).atTime(23, 59, 59);
+                    labels = Arrays.asList("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec");
+                    break;
+                }
+                default:
+                    throw new IllegalArgumentException("Invalid period. Use today, week, month, or year.");
+            }
 
-        // Fetch data
-        List<SaleEntry> salesEntries = filterNonDeleted(
-                saleEntryRepository.findAllByClient_IdInAndDeleteFlagFalseAndSaleDateTimeBetween(clientIds, startDate,
-                        endDate));
-        List<Expense> expenses = expenseRepository.findByClientIdInAndDatetimeISTBetween(clientIds, startDate, endDate);
-        List<InBill> outBills = inBillRepository.findByClientIdInAndDateBetweenAndIsInBillFalse(clientIds, startDate,
-                endDate);
+            // Fetch data
+            List<SaleEntry> salesEntries = saleEntryRepository
+                    .findAllByClient_IdInAndDeleteFlagFalseAndSaleDateTimeBetween(clientIds, startDate, endDate);
 
-        // Aggregate data
-        switch (period.toLowerCase()) {
-            case "today":
-            case "week": {
-                LocalDate startLabelDate = period.equalsIgnoreCase("week")
-                        ? today.with(DayOfWeek.MONDAY)
-                        : LocalDate.of(today.getYear(), today.getMonth(), 1);
+            List<Expense> expenses = expenseRepository
+                    .findByClientIdInAndDatetimeISTBetween(clientIds, startDate, endDate);
 
-                int days = labels.size();
-                for (int i = 0; i < days; i++) {
-                    LocalDate date = startLabelDate.plusDays(i);
+            List<InBill> outBills = inBillRepository
+                    .findByClientIdInAndDateBetweenAndIsInBillFalse(clientIds, startDate, endDate);
 
-                    Double dailySale = salesEntries.stream()
+            List<InBill> inBills = inBillRepository
+                    .findByClientIdInAndDateBetweenAndIsInBillTrue(clientIds, startDate, endDate);
+
+            List<Deposit> deposits = depositRepository
+                    .findByClientIdInAndDepositDateBetween(clientIds, startDate, endDate);
+
+            if (period.equalsIgnoreCase("today")) {
+                // Single day totals
+                double totalSale = salesEntries.stream()
+                        .mapToDouble(e -> Optional.ofNullable(e.getTotalPrice()).orElse(0.0)).sum();
+                double totalProfit = salesEntries.stream()
+                        .mapToDouble(e -> Optional.ofNullable(e.getProfit()).orElse(0.0)).sum();
+                double totalExpense = expenses.stream().mapToDouble(e -> Optional.ofNullable(e.getAmount()).orElse(0.0))
+                        .sum();
+                double totalOutBill = outBills.stream().mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
+                        .sum();
+                double totalInBill = inBills.stream().mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
+                        .sum();
+                double totalDeposit = deposits.stream().mapToDouble(d -> Optional.ofNullable(d.getAmount()).orElse(0.0))
+                        .sum();
+
+                salesData.add(totalSale);
+                profitData.add(totalProfit);
+                expensesData.add(totalExpense);
+                outBillData.add(totalOutBill);
+                inBillData.add(totalInBill);
+                depositData.add(totalDeposit);
+            } else if (period.equalsIgnoreCase("week")) {
+                for (int i = 0; i < 7; i++) {
+                    LocalDate date = today.with(DayOfWeek.MONDAY).plusDays(i);
+
+                    double dailySale = salesEntries.stream()
                             .filter(e -> e.getSaleDateTime().toLocalDate().equals(date))
                             .mapToDouble(e -> Optional.ofNullable(e.getTotalPrice()).orElse(0.0))
                             .sum();
 
-                    Double dailyProfit = salesEntries.stream()
+                    double dailyProfit = salesEntries.stream()
                             .filter(e -> e.getSaleDateTime().toLocalDate().equals(date))
                             .mapToDouble(e -> Optional.ofNullable(e.getProfit()).orElse(0.0))
                             .sum();
 
-                    Double dailyExpense = expenses.stream()
+                    double dailyExpense = expenses.stream()
                             .filter(e -> e.getDatetimeIST().toLocalDate().equals(date))
                             .mapToDouble(e -> Optional.ofNullable(e.getAmount()).orElse(0.0))
                             .sum();
 
-                    Double dailyOutBill = outBills.stream()
+                    double dailyOutBill = outBills.stream()
                             .filter(b -> b.getDate().toLocalDate().equals(date))
+                            .mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
+                            .sum();
+
+                    double dailyInBill = inBills.stream()
+                            .filter(b -> b.getDate().toLocalDate().equals(date))
+                            .mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
+                            .sum();
+
+                    double dailyDeposit = deposits.stream()
+                            .filter(b -> b.getDepositDate().toLocalDate().equals(date))
                             .mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
                             .sum();
 
@@ -537,30 +654,82 @@ public class SaleEntryController {
                     profitData.add(dailyProfit);
                     expensesData.add(dailyExpense);
                     outBillData.add(dailyOutBill);
+                    inBillData.add(dailyInBill);
+                    depositData.add(dailyDeposit);
                 }
-                break;
-            }
-            case "month": {
-                for (int month = 1; month <= 12; month++) {
-                    final int currentMonth = month; // make final for lambda
+            } else if (period.equalsIgnoreCase("month")) {
+                YearMonth currentMonth = YearMonth.from(today);
+                for (int day = 1; day <= currentMonth.lengthOfMonth(); day++) {
+                    LocalDate date = LocalDate.of(today.getYear(), today.getMonth(), day);
 
-                    Double monthlySale = salesEntries.stream()
-                            .filter(e -> e.getSaleDateTime().getMonthValue() == currentMonth)
+                    double dailySale = salesEntries.stream()
+                            .filter(e -> e.getSaleDateTime().toLocalDate().equals(date))
                             .mapToDouble(e -> Optional.ofNullable(e.getTotalPrice()).orElse(0.0))
                             .sum();
 
-                    Double monthlyProfit = salesEntries.stream()
-                            .filter(e -> e.getSaleDateTime().getMonthValue() == currentMonth)
+                    double dailyProfit = salesEntries.stream()
+                            .filter(e -> e.getSaleDateTime().toLocalDate().equals(date))
                             .mapToDouble(e -> Optional.ofNullable(e.getProfit()).orElse(0.0))
                             .sum();
 
-                    Double monthlyExpense = expenses.stream()
-                            .filter(e -> e.getDatetimeIST().getMonthValue() == currentMonth)
+                    double dailyExpense = expenses.stream()
+                            .filter(e -> e.getDatetimeIST().toLocalDate().equals(date))
                             .mapToDouble(e -> Optional.ofNullable(e.getAmount()).orElse(0.0))
                             .sum();
 
-                    Double monthlyOutBill = outBills.stream()
-                            .filter(b -> b.getDate().getMonthValue() == currentMonth)
+                    double dailyOutBill = outBills.stream()
+                            .filter(b -> b.getDate().toLocalDate().equals(date))
+                            .mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
+                            .sum();
+
+                    double dailyInBill = inBills.stream()
+                            .filter(b -> b.getDate().toLocalDate().equals(date))
+                            .mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
+                            .sum();
+
+                    double dailyDeposit = deposits.stream()
+                            .filter(b -> b.getDepositDate().toLocalDate().equals(date))
+                            .mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
+                            .sum();
+
+                    salesData.add(dailySale);
+                    profitData.add(dailyProfit);
+                    expensesData.add(dailyExpense);
+                    outBillData.add(dailyOutBill);
+                    inBillData.add(dailyInBill);
+                    depositData.add(dailyDeposit);
+                }
+            } else if (period.equalsIgnoreCase("year")) {
+                for (int m = 1; m <= 12; m++) {
+                    YearMonth ym = YearMonth.of(today.getYear(), m);
+
+                    double monthlySale = salesEntries.stream()
+                            .filter(e -> YearMonth.from(e.getSaleDateTime().toLocalDate()).equals(ym))
+                            .mapToDouble(e -> Optional.ofNullable(e.getTotalPrice()).orElse(0.0))
+                            .sum();
+
+                    double monthlyProfit = salesEntries.stream()
+                            .filter(e -> YearMonth.from(e.getSaleDateTime().toLocalDate()).equals(ym))
+                            .mapToDouble(e -> Optional.ofNullable(e.getProfit()).orElse(0.0))
+                            .sum();
+
+                    double monthlyExpense = expenses.stream()
+                            .filter(e -> YearMonth.from(e.getDatetimeIST().toLocalDate()).equals(ym))
+                            .mapToDouble(e -> Optional.ofNullable(e.getAmount()).orElse(0.0))
+                            .sum();
+
+                    double monthlyOutBill = outBills.stream()
+                            .filter(b -> YearMonth.from(b.getDate().toLocalDate()).equals(ym))
+                            .mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
+                            .sum();
+
+                    double monthlyInBill = inBills.stream()
+                            .filter(b -> YearMonth.from(b.getDate().toLocalDate()).equals(ym))
+                            .mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
+                            .sum();
+
+                    double monthlyDeposit = deposits.stream()
+                            .filter(b -> YearMonth.from(b.getDepositDate().toLocalDate()).equals(ym))
                             .mapToDouble(b -> Optional.ofNullable(b.getAmount()).orElse(0.0))
                             .sum();
 
@@ -568,33 +737,20 @@ public class SaleEntryController {
                     profitData.add(monthlyProfit);
                     expensesData.add(monthlyExpense);
                     outBillData.add(monthlyOutBill);
+                    inBillData.add(monthlyInBill);
+                    depositData.add(monthlyDeposit);
                 }
-                break;
             }
         }
 
-        // Set response
+        // ---------------- RESPONSE ----------------
         response.setLabels(labels);
         response.setSalesData(salesData);
         response.setProfitData(profitData);
         response.setExpensesData(expensesData);
         response.setOutBillData(outBillData);
-
-        // Calculate totals
-        double totalExpense = expensesData.stream().mapToDouble(Double::doubleValue).sum();
-        double totalOutBill = outBillData.stream().mapToDouble(Double::doubleValue).sum();
-        response.setTotalExpense(Math.round(totalExpense * 100.0) / 100.0);
-        response.setTotalOutBill(Math.round(totalOutBill * 100.0) / 100.0);
-
-        // Other stats
-        response.setAverageSale(
-                Math.round(salesData.stream().mapToDouble(Double::doubleValue).average().orElse(0) * 100.0) / 100.0);
-        response.setAverageProfit(
-                Math.round(profitData.stream().mapToDouble(Double::doubleValue).average().orElse(0) * 100.0) / 100.0);
-        response.setHighestSale(
-                Math.round(salesData.stream().mapToDouble(Double::doubleValue).max().orElse(0) * 100.0) / 100.0);
-        response.setHighestProfit(
-                Math.round(profitData.stream().mapToDouble(Double::doubleValue).max().orElse(0) * 100.0) / 100.0);
+        response.setInBillData(inBillData);
+        response.setDepositData(depositData);
 
         return response;
     }
