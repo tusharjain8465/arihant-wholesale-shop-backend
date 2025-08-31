@@ -350,10 +350,18 @@ public class SaleEntryService {
                                 ? "RETURN -> " + updatedEntry.getAccessoryName()
                                 : "ADD -> " + updatedEntry.getAccessoryName());
 
-        existing.setTotalPrice(
-                updatedEntry.getTotalPrice() != null ? updatedEntry.getTotalPrice() : 0.0);
-        existing.setProfit(
-                updatedEntry.getProfit() != null ? updatedEntry.getProfit() : 0.0);
+        if (existing.getReturnFlag()) {
+            existing.setTotalPrice(
+                    updatedEntry.getTotalPrice() != null ? -updatedEntry.getTotalPrice() : 0.0);
+            existing.setProfit(
+                    updatedEntry.getProfit() != null ? -updatedEntry.getProfit() : 0.0);
+        } else {
+
+            existing.setTotalPrice(
+                    updatedEntry.getTotalPrice() != null ? updatedEntry.getTotalPrice() : 0.0);
+            existing.setProfit(
+                    updatedEntry.getProfit() != null ? updatedEntry.getProfit() : 0.0);
+        }
 
         existing.setQuantity(updatedEntry.getQuantity());
         existing.setReturnFlag(updatedEntry.getReturnFlag());
