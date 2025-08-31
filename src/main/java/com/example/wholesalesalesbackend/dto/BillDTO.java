@@ -12,4 +12,8 @@ public class BillDTO {
     public String supplierName;
     public Double amount;
     public String type;
+
+    public Double totalInBillAmount;
+    public Double totalOutBillAmount;
+    public Double netAmount;
 }
