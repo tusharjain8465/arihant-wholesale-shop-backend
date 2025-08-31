@@ -44,4 +44,33 @@ public interface InBillRepository extends JpaRepository<InBill, Long> {
         List<InBill> findByClientIdInAndDateBetweenAndIsInBillFalse(List<Long> clientIds, LocalDateTime startDate,
                 LocalDateTime endDate);
 
+
+         List<InBill> findByClientIdInAndDateBetweenAndIsInBillTrue(List<Long> clientIds, LocalDateTime startDate,
+                        LocalDateTime endDate);
+
+        @Query("""
+                            SELECT
+                                SUM(CASE WHEN s.isInBill = true THEN s.amount ELSE 0 END),
+                                SUM(CASE WHEN s.isInBill = false THEN s.amount ELSE 0 END)
+                            FROM InBill s
+                            WHERE (:supplier IS NULL OR s.supplier = :supplier)
+                              AND (:userId IS NULL OR s.userId = :userId)
+                              AND (:clientId IS NULL OR s.clientId = :clientId)
+                              AND (s.date >= COALESCE(:startDateTime, s.date))
+                              AND (s.date <= COALESCE(:endDateTime, s.date))
+                              AND (:searchText IS NULL OR LOWER(s.filter) LIKE LOWER(CONCAT('%', :searchText, '%')))
+                        """)
+        Object[] calculateTotals(
+                        @Param("supplier") String supplier,
+                        @Param("startDateTime") LocalDateTime startDateTime,
+                        @Param("endDateTime") LocalDateTime endDateTime,
+                        @Param("searchText") String searchText,
+                        @Param("userId") Long userId,
+                        @Param("clientId") Long clientId);
+
+        List<InBill> findBySupplierAndClientIdAndUserIdAndIsInBillTrue(String supplierName, Long clientId, Long userId);
+
+        List<InBill> findBySupplierAndClientIdAndUserIdAndIsInBillFalse(String supplierName, Long clientId,
+                Long userId);
+
 }
