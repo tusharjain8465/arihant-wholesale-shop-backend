@@ -124,20 +124,7 @@ public class PdfController {
                 String filename = client.getName() + "_" + formattedDate + "_" + eachUser.getUsername() + ".pdf";
                 pdfMap.put(filename, pdfBytes);
             }
-
-            // ---------------- NEW: Add period-based sales PDF ----------------
-            // Example: 'today' report, you can change to 'week' or 'month' as needed
-            try {
-                ResponseEntity<byte[]> dailyPdfResponse = saleEntryController.downloadSalesPdf("today", eachUser.getId(), null);
-                String periodPdfFilename = dailyPdfResponse.getHeaders()
-                        .getContentDisposition()
-                        .getFilename(); // uses the filename from downloadSalesPdf
-                pdfMap.put(periodPdfFilename, dailyPdfResponse.getBody());
-            } catch (Exception e) {
-                System.err.println(
-                        "Error generating daily PDF for user " + eachUser.getUsername() + ": " + e.getMessage());
-            }
-
+        
             // ---------------- Send email with all PDFs ----------------
             sendMailWithMultipleAttachments(eachUser.getMail(), pdfMap, formattedDate);
         }
