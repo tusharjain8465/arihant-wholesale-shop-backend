@@ -63,4 +63,7 @@ public interface DepositRepository extends JpaRepository<Deposit, Long> {
         void deleteAllByUserId(Long userId);
 
         void deleteAllByClientId(Long id);
+
+                List<Deposit> findByClientIdInAndDepositDateBetween(List<Long> clientIds, LocalDateTime startDate,
+                LocalDateTime endDate);
 }
