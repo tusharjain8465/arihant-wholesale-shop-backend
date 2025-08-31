@@ -27,7 +27,7 @@ public class SupplierService {
         this.supplierRepository = supplierRepository;
     }
 
-    public Supplier addSupplier(Supplier supplier,Long userId,Long clientId) {
+    public Supplier addSupplier(Supplier supplier, Long userId, Long clientId) {
         // Set datetimeIST if not provided
         LocalDateTime supplierDateTimeIST;
         ZoneId indiaZone = ZoneId.of("Asia/Kolkata");
@@ -44,11 +44,12 @@ public class SupplierService {
         supplier.setDatetimeIST(supplierDateTimeIST);
         supplier.setUserId(userId);
         supplier.setClientId(clientId);
+        supplier.setDeleteFlag(false);
         return supplierRepository.save(supplier);
     }
 
     public List<Supplier> getAllSuppliers(Long clientId) {
-        return supplierRepository.findAllByClientId(clientId);
+        return supplierRepository.findAllByClientIdAndDeleteFlagFalse(clientId);
     }
 
     public String deleteSupplierByid(Long id) {
@@ -57,17 +58,18 @@ public class SupplierService {
 
         if (existSupplier.isPresent()) {
 
-            billRepository.deleteAllBySupplier(existSupplier.get().getName());
+            Supplier updateSupplier = existSupplier.get();
+            updateSupplier.setDeleteFlag(true);
+            supplierRepository.save(updateSupplier);
 
-            supplierRepository.delete(existSupplier.get());
         }
 
-        return "Deleted !!!";
+        return "Soft Deleted !!!";
 
     }
 
     public List<Supplier> findAllSuppliers(Long userId, Long clientId) {
-        return supplierRepository.findAllByUserIdAndClientId(userId,clientId);
+        return supplierRepository.findAllByUserIdAndClientIdAndDeleteFlagFalse(userId, clientId);
 
     }
 
