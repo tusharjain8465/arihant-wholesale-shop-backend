@@ -25,5 +25,6 @@ public class GraphResponseDTO {
   private double totalOutBill;
   private double totalInBill;
   private double totalDeposit;
+  private double myShopSale;
 
 }
