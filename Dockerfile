@@ -1,28 +1,35 @@
-# Step 1: Use a JDK image to build the app
-FROM openjdk:17-jdk-slim as builder
+# ===============================
+# STEP 1: BUILD STAGE
+# ===============================
+FROM maven:3.9.6-eclipse-temurin-17 AS builder
+
 WORKDIR /app
 
-# Copy Maven/Gradle files first (for caching dependencies)
+# Copy Maven files first (better caching)
 COPY pom.xml .
 COPY mvnw .
 COPY .mvn .mvn
+
 RUN ./mvnw dependency:go-offline
 
 # Copy source code
 COPY src ./src
 
-# Build the Spring Boot application
+# Build the Spring Boot app
 RUN ./mvnw clean package -DskipTests
 
-# Step 2: Run the built app
-FROM openjdk:17-jdk-slim
+
+# ===============================
+# STEP 2: RUNTIME STAGE
+# ===============================
+FROM eclipse-temurin:17-jre-jammy
+
 WORKDIR /app
 
 COPY --from=builder /app/target/*.jar app.jar
 
-# Expose the port for Render
+# Render provides PORT env variable
+ENV PORT=8080
 EXPOSE 8080
 
-# Run the jar
 ENTRYPOINT ["java", "-jar", "app.jar"]
-
