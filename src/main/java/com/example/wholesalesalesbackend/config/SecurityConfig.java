@@ -36,7 +36,7 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .cors(Customizer.withDefaults()) // ✅ enable CORS
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/login", "/api/users/register", "/api/pdf/ping","/api/pdf/send-pdf-backup-on-mail").permitAll()
+                        .requestMatchers("/api/auth/login", "/api/users/register", "/api/pdf/ping","/api/pdf/send-pdf-backup-on-mail","/api/mobile-inventory/**").permitAll()
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/actuator/**").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
