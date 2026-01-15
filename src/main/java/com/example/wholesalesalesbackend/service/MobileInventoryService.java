@@ -1,14 +1,15 @@
 package com.example.wholesalesalesbackend.service;
 
+import java.time.LocalDate;
+import java.util.List;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import com.example.wholesalesalesbackend.dto.MobileInventoryRequest;
+import com.example.wholesalesalesbackend.dto.MobilePurchaseInventoryRequest;
+import com.example.wholesalesalesbackend.dto.MobileSellInventoryRequest;
 import com.example.wholesalesalesbackend.model.MobileInventory;
 import com.example.wholesalesalesbackend.repository.MobileInventoryRepository;
-
-import java.time.LocalDate;
-import java.util.List;
 
 @Service
 public class MobileInventoryService {
@@ -19,21 +20,48 @@ public class MobileInventoryService {
     /* ===================== */
     /* CREATE */
     /* ===================== */
-    public MobileInventory save(MobileInventoryRequest request) {
+    public MobileInventory save(MobilePurchaseInventoryRequest request) {
+
         MobileInventory inventory = new MobileInventory();
-        mapRequestToEntity(request, inventory);
+
+        inventory.setMobileName(request.mobileName);
+        inventory.setImei1(request.imei1);
+        inventory.setImei2(request.imei2);
+        inventory.setSupplierName(request.supplierName);
+        inventory.setPurchaseDate(request.purchaseDate);
+
         return repository.save(inventory);
     }
 
     /* ===================== */
     /* UPDATE */
     /* ===================== */
-    public MobileInventory update(Long id, MobileInventoryRequest request) {
+    public MobileInventory update(Long id, MobileSellInventoryRequest request) {
+
         MobileInventory inventory = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Mobile not found"));
 
-        mapRequestToEntity(request, inventory);
+        // Update sold info ONLY if provided
+        inventory.setSoldTo(request.soldTo);
+        inventory.setSoldDate(request.soldDate);
+        inventory.setPrice(request.price);
+
         return repository.save(inventory);
+    }
+
+    /* ===================== */
+    /* GET ALL */
+    /* ===================== */
+    public List<MobileInventory> findAll() {
+        return repository.findAll();
+    }
+
+    /* ===================== */
+    /* GET BY ID */
+    /* ===================== */
+    public MobileInventory findById(Long id) {
+        return repository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Mobile not found"));
     }
 
     /* ===================== */
@@ -46,36 +74,5 @@ public class MobileInventoryService {
         repository.deleteById(id);
     }
 
-    /* ===================== */
-    /* FILTER */
-    /* ===================== */
-    public List<MobileInventory> filterByDate(LocalDate fromDate, LocalDate toDate) {
-        return repository.filterByPurchaseDate(fromDate, toDate);
-    }
-
-    public List<MobileInventory> findAll() {
-        return repository.findAll();
-    }
-
-    public MobileInventory findById(Long id) {
-        return repository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Mobile not found"));
-    }
-
-    /* ===================== */
-    /* COMMON MAPPER */
-    /* ===================== */
-    private void mapRequestToEntity(
-            MobileInventoryRequest request,
-            MobileInventory inventory) {
-
-        inventory.setMobileName(request.mobileName);
-        inventory.setImei1(request.imei1);
-        inventory.setImei2(request.imei2);
-        inventory.setSupplierName(request.supplierName);
-        inventory.setSoldTo(request.soldTo);
-        inventory.setPurchaseDate(request.purchaseDate);
-        inventory.setSoldDate(request.soldDate);
-        inventory.setPrice(request.price);
-    }
+   
 }
