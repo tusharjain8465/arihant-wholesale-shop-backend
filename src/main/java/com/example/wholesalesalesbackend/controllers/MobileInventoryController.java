@@ -14,7 +14,7 @@ import com.example.wholesalesalesbackend.service.MobileInventoryService;
 
 @RestController
 @RequestMapping("/api/mobile-inventory")
-@CrossOrigin(origins = "*")
+@CrossOrigin(origins = "https://arihant-wholesale-shop-frontend.vercel.app")
 public class MobileInventoryController {
 
     @Autowired
