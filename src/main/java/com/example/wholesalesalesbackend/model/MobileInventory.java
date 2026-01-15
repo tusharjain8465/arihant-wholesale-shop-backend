@@ -28,10 +28,8 @@ public class MobileInventory {
     @Column(name = "mobile_name")
     private String mobileName;
 
-    @Column(nullable = false)
     private String imei1;
 
-    @Column(nullable = false)
     private String imei2;
 
     @Column(name = "supplier_name")
@@ -46,12 +44,8 @@ public class MobileInventory {
     @Column(name = "sold_date")
     private LocalDate soldDate;
 
-    @Column(nullable = false)
     private Double price;
 
-    @Column(name = "created_at")
-    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm")
-    private LocalDateTime createdAt = LocalDateTime.now();
-
+    
     // getters & setters
 }
